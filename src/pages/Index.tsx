@@ -24,12 +24,25 @@ interface PatientData {
   cvdRisk: number;
 }
 
+// Define the form data type to match what PatientForm component expects
+type FormData = {
+  age: number;
+  gender: "male" | "female" | "other";
+  a1c: number;
+  fbs: number;
+  weight: number;
+  bmi: number;
+  renalFunction: "normal" | "mild" | "moderate" | "severe";
+  liverFunction: "normal" | "impaired";
+  cvdRisk: number;
+}
+
 const Index = () => {
   const [recommendations, setRecommendations] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [showResults, setShowResults] = useState(false);
 
-  const handleSubmit = async (data: PatientData) => {
+  const handleSubmit = async (data: FormData) => {
     setLoading(true);
     toast.info("Analyzing patient data...", {
       description: "Our ML model is processing your request",
