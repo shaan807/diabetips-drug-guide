@@ -5,16 +5,36 @@
 
 import { toast } from "sonner";
 
-// Feature importance weights based on commonly used clinical factors
+// Clinical thresholds for medication recommendation
+const CLINICAL_THRESHOLDS = {
+  a1c: {
+    normal: 5.6, // Below this is normal
+    prediabetes: 6.4, // Between normal and this is prediabetes
+    diabetes: 6.5, // Above this is diabetes requiring medication
+    poorControl: 8.0 // Above this is poorly controlled diabetes
+  },
+  fbs: {
+    normal: 100, // Below this is normal (mg/dL)
+    prediabetes: 125, // Between normal and this is prediabetes
+    diabetes: 126 // Above this is diabetes
+  },
+  bmi: {
+    normal: 25, // Below this is normal or underweight
+    overweight: 30, // Between normal and this is overweight
+    obese: 30 // Above this is obese
+  }
+};
+
+// Refined feature importance weights based on clinical guidelines
 const featureWeights = {
-  a1c: 0.25,
-  renalFunction: 0.20,
-  age: 0.15,
+  a1c: 0.30, // Increased weight for A1C as primary diagnostic
+  fbs: 0.15, // Increased weight for fasting blood sugar
+  renalFunction: 0.15,
+  age: 0.10,
   cvdRisk: 0.15,
   liverFunction: 0.10,
-  bmi: 0.08,
-  fbs: 0.05,
-  weight: 0.02,
+  bmi: 0.05,
+  weight: 0.00, // Weight considered via BMI already
 };
 
 // Medication database with clinical properties
@@ -150,9 +170,10 @@ const medicationDatabase = [
 
 // Input categorization functions
 const categorizeA1c = (value: number) => {
-  if (value >= 9) return "high";
-  if (value >= 7) return "medium";
-  return "low";
+  if (value >= CLINICAL_THRESHOLDS.a1c.poorControl) return "high";
+  if (value >= CLINICAL_THRESHOLDS.a1c.diabetes) return "medium";
+  if (value >= CLINICAL_THRESHOLDS.a1c.prediabetes) return "low";
+  return "normal";
 };
 
 const categorizeAge = (value: number) => {
@@ -163,8 +184,8 @@ const categorizeAge = (value: number) => {
 
 const categorizeBMI = (value: number) => {
   if (value >= 35) return "veryHigh";
-  if (value >= 30) return "high";
-  if (value >= 18.5) return "normal";
+  if (value >= CLINICAL_THRESHOLDS.bmi.obese) return "high";
+  if (value >= CLINICAL_THRESHOLDS.bmi.normal) return "normal";
   return "low";
 };
 
@@ -174,6 +195,52 @@ const categorizeCVDRisk = (value: number) => {
   return "low";
 };
 
+const categorizeFBS = (value: number) => {
+  if (value >= 200) return "veryHigh";
+  if (value >= CLINICAL_THRESHOLDS.fbs.diabetes) return "high";
+  if (value >= CLINICAL_THRESHOLDS.fbs.normal) return "elevated";
+  return "normal";
+};
+
+// Determine if patient needs medication based on clinical guidelines
+const needsMedication = (patientData: any) => {
+  // Diabetes diagnosis criteria
+  const hasElevatedA1c = patientData.a1c >= CLINICAL_THRESHOLDS.a1c.diabetes;
+  const hasElevatedFBS = patientData.fbs >= CLINICAL_THRESHOLDS.fbs.diabetes;
+  
+  // Prediabetes with risk factors
+  const hasPrediabetes = patientData.a1c >= CLINICAL_THRESHOLDS.a1c.prediabetes && 
+                          patientData.a1c < CLINICAL_THRESHOLDS.a1c.diabetes;
+  const hasElevatedPreFBS = patientData.fbs >= CLINICAL_THRESHOLDS.fbs.prediabetes && 
+                            patientData.fbs < CLINICAL_THRESHOLDS.fbs.diabetes;
+  const hasCardiovascularRisk = patientData.cvdRisk >= 15;
+  const isObese = patientData.bmi >= CLINICAL_THRESHOLDS.bmi.obese;
+  const isElderly = patientData.age >= 65;
+  const hasRenalImpairment = patientData.renalFunction !== "normal";
+  const hasLiverImpairment = patientData.liverFunction !== "normal";
+  
+  // Medication needed if:
+  // 1. Has diabetes by A1c or FBS
+  if (hasElevatedA1c || hasElevatedFBS) return true;
+  
+  // 2. Prediabetes with multiple risk factors
+  if (hasPrediabetes || hasElevatedPreFBS) {
+    // Count risk factors
+    let riskFactorCount = 0;
+    if (hasCardiovascularRisk) riskFactorCount++;
+    if (isObese) riskFactorCount++;
+    if (isElderly) riskFactorCount++;
+    if (hasRenalImpairment) riskFactorCount++;
+    if (hasLiverImpairment) riskFactorCount++;
+    
+    // Medication recommended if prediabetes with 2+ risk factors
+    return riskFactorCount >= 2;
+  }
+  
+  // No medication needed
+  return false;
+};
+
 // Normalize features to 0-1 scale
 const normalizeFeatures = (patientData: any) => {
   // Convert categorical features to numerical representation
@@ -181,9 +248,11 @@ const normalizeFeatures = (patientData: any) => {
   const ageCategory = categorizeAge(patientData.age);
   const bmiCategory = categorizeBMI(patientData.bmi);
   const cvdCategory = categorizeCVDRisk(patientData.cvdRisk);
+  const fbsCategory = categorizeFBS(patientData.fbs);
   
   return {
     a1cCategory,
+    fbsCategory,
     ageCategory,
     bmiCategory,
     cvdCategory,
@@ -193,17 +262,32 @@ const normalizeFeatures = (patientData: any) => {
   };
 };
 
-// Calculate medication scores
-const calculateMedicationScores = (normalizedFeatures: any) => {
+// Calculate medication scores with refined logic
+const calculateMedicationScores = (normalizedFeatures: any, patientData: any) => {
+  // First check if medication is needed
+  if (!needsMedication(patientData)) {
+    return []; // Return empty array if no medication needed
+  }
+  
   return medicationDatabase.map(medication => {
     // Calculate score based on weighted feature affinities
     let score = 0;
     let totalWeight = 0;
     
-    // A1C score
+    // A1C score (higher weight)
     const a1cWeight = featureWeights.a1c;
     score += a1cWeight * medication.affinities.a1c[normalizedFeatures.a1cCategory];
     totalWeight += a1cWeight;
+    
+    // FBS score (added)
+    const fbsWeight = featureWeights.fbs;
+    if (medication.affinities.fbs) {
+      score += fbsWeight * medication.affinities.fbs[normalizedFeatures.fbsCategory];
+    } else {
+      // Fallback if FBS affinities not defined for a medication
+      score += fbsWeight * 0.7; // Default moderate affinity
+    }
+    totalWeight += fbsWeight;
     
     // Renal function score
     const renalWeight = featureWeights.renalFunction;
@@ -237,11 +321,50 @@ const calculateMedicationScores = (normalizedFeatures: any) => {
     // Normalize score to 0-1 range
     const normalizedScore = score / totalWeight;
     
+    // Apply clinical adjustments
+    let adjustedScore = normalizedScore;
+    
+    // Adjust for severe renal impairment
+    if (normalizedFeatures.renalFunction === "severe") {
+      // Reduce score for medications contraindicated in severe renal disease
+      if (medication.name.includes("Metformin") || medication.name.includes("SGLT-2")) {
+        adjustedScore *= 0.3;
+      }
+    }
+    
+    // Adjust for liver impairment
+    if (normalizedFeatures.liverFunction === "impaired") {
+      // Reduce score for medications contraindicated in liver disease
+      if (medication.name.includes("Pioglitazone") || medication.name.includes("Sulfonylureas")) {
+        adjustedScore *= 0.4;
+      }
+    }
+    
+    // Adjust for high cardiovascular risk
+    if (normalizedFeatures.cvdCategory === "high") {
+      // Boost score for medications with cardiovascular benefits
+      if (medication.name.includes("SGLT-2") || medication.name.includes("GLP-1")) {
+        adjustedScore *= 1.3;
+      }
+    }
+    
+    // Adjust for very high BMI
+    if (normalizedFeatures.bmiCategory === "veryHigh") {
+      // Boost score for medications that support weight loss
+      if (medication.name.includes("GLP-1") || medication.name.includes("SGLT-2")) {
+        adjustedScore *= 1.25;
+      }
+      // Reduce score for medications that cause weight gain
+      if (medication.name.includes("Sulfonylureas") || medication.name.includes("Insulin")) {
+        adjustedScore *= 0.7;
+      }
+    }
+    
     return {
       ...medication,
-      score: normalizedScore
+      score: adjustedScore
     };
-  });
+  }).filter(med => med.score > 0.5); // Only return medications with reasonable match scores
 };
 
 // Main prediction function
@@ -250,11 +373,26 @@ export const predictMedications = async (patientData: any) => {
     // Simulate API delay
     await new Promise(resolve => setTimeout(resolve, 1500));
     
+    // Check if patient meets criteria for medication
+    if (!needsMedication(patientData)) {
+      toast.info("No medications recommended", {
+        description: "Based on the clinical criteria, this patient does not require diabetes medication at this time."
+      });
+      return [];
+    }
+    
     // Normalize and transform input features
     const normalizedFeatures = normalizeFeatures(patientData);
     
-    // Generate recommendations
-    const recommendations = calculateMedicationScores(normalizedFeatures);
+    // Generate recommendations with refined scoring
+    const recommendations = calculateMedicationScores(normalizedFeatures, patientData);
+    
+    // If recommendations are empty even though patient meets criteria
+    if (recommendations.length === 0) {
+      toast.warning("Limited recommendations available", {
+        description: "The patient may benefit from medication but current options have low suitability scores."
+      });
+    }
     
     // Sort by score descending
     return recommendations.sort((a, b) => b.score - a.score);

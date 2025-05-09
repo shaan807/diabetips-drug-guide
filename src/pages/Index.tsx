@@ -6,7 +6,7 @@ import RecommendationResults from '@/components/RecommendationResults';
 import Footer from '@/components/Footer';
 import { Card, CardContent } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
-import { AlertCircle, Activity } from 'lucide-react';
+import { AlertCircle, Activity, InfoIcon } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { predictMedications } from '@/lib/mlModel';
 import { toast } from 'sonner';
@@ -41,9 +41,13 @@ const Index = () => {
   const [recommendations, setRecommendations] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [showResults, setShowResults] = useState(false);
+  const [noMedications, setNoMedications] = useState(false);
 
   const handleSubmit = async (data: FormData) => {
     setLoading(true);
+    setShowResults(false);
+    setNoMedications(false);
+    
     toast.info("Analyzing patient data...", {
       description: "Our ML model is processing your request",
       icon: <Activity className="h-5 w-5" />,
@@ -53,9 +57,17 @@ const Index = () => {
       const results = await predictMedications(data);
       setRecommendations(results);
       setShowResults(true);
-      toast.success("Recommendations ready", {
-        description: `${results.length} medications analyzed for this patient profile`,
-      });
+      
+      if (results.length === 0) {
+        setNoMedications(true);
+        toast.info("No medications recommended", {
+          description: "This patient does not meet clinical criteria for diabetes medication",
+        });
+      } else {
+        toast.success("Recommendations ready", {
+          description: `${results.length} medications analyzed for this patient profile`,
+        });
+      }
     } catch (error) {
       toast.error("Error generating recommendations", {
         description: "Please try again or contact support",
@@ -85,7 +97,8 @@ const Index = () => {
             <AlertDescription>
               This system uses a machine learning model to recommend diabetes medications based on patient characteristics. 
               The recommendations are sorted by predicted effectiveness for the specific patient profile. Please provide
-              accurate information for the best results.
+              accurate information for the best results. Patients who don't meet clinical criteria for medication will
+              not receive recommendations.
             </AlertDescription>
           </Alert>
           
@@ -113,7 +126,19 @@ const Index = () => {
           {showResults && !loading && (
             <div className="mt-8">
               <Separator className="my-8" />
-              <RecommendationResults recommendations={recommendations} />
+              {noMedications ? (
+                <Alert variant="default" className="bg-gray-100 border-gray-300">
+                  <InfoIcon className="h-4 w-4 text-gray-500" />
+                  <AlertTitle>No Medications Recommended</AlertTitle>
+                  <AlertDescription>
+                    Based on the clinical guidelines and the provided patient data, no medications are recommended at this time. 
+                    The patient may benefit from lifestyle modifications such as diet and exercise. Regular monitoring of A1C 
+                    and blood glucose levels is advised.
+                  </AlertDescription>
+                </Alert>
+              ) : (
+                <RecommendationResults recommendations={recommendations} />
+              )}
             </div>
           )}
         </div>
